@@ -1,10 +1,52 @@
 <!DOCTYPE html>
-<body>
-
-<canvas id="canvas" width="320" height="240" style="border: black 1px dotted">your browser stinky</canvas>
-<textarea id="text"></textarea>
-<button onclick="textIndex=0">Animate</button>
+<head>
+<style>
+textarea {
+	border: none;
+	padding: 0;
+	margin: 0;
+	font-size: 300%;
+	outline: none;
+	background: #F0F0F0
+}
+canvas {
+	display: block;
+}
+button {
+	height: 20px;
+}
+label {
+	margin-right: 1px;
+}
+</style>
+</head>
+<body style="margin: 0">
+<canvas id="canvas" width="672" height="240">your browser stinky</canvas>
+<canvas id="democanvas" width="672" height="240">your browser stinky</canvas>
+<textarea id="text" style="width:672px;height:223px;resize: none;display: block"></textarea>
+<label style="background: white"><input id="manual" type="checkbox" style="margin: 0">Manual mode</label>
+<label style="background: white"><input type="radio" name="close" value="close" style="margin: 0">Prompt and close</label>
+<label style="background: white"><input type="radio" name="close" value="prompt" style="margin: 0">Prompt</label>
+<label style="background: white"><input type="radio" name="close" value="none" style="margin: 0">None</label>
+<label style="background: white">Style: <select id="style" style="margin: 0">
+	<option value="Dialogue">Dialogue</option>
+	<option value="Thoughts">Thoughts</option>
+	<option value="Inscription">Inscription</option>
+	<option value="System">System</option>
+</select></label>
+<label style="background: white">Center: <select id="center" style="margin: 0">
+	<option value="off">off</option>
+	<option value="line">line</option>
+	<option value="fullline">fullline</option>
+	<option value="page">page</option>
+	<option value="fullpage">fullpage</option>
+</select></label>
+<button onclick="tbox.close()">Close</button>
+<div class="unimportant" style="display: none">
+<canvas id="box" width="224" height="80" style="background: black">your browser stinky</canvas>
 <img src="gohu14.bmp" id="font" style="background: black" onload="fontOK()">
+<img src="textbox.png" id="textbox">
+</div>
 <script>
 Glyph = class {
 	constructor(x,y,w,h) {
@@ -15,32 +57,718 @@ Glyph = class {
 	}
 }
 
-textbox = document.getElementById("text")
+Character = class {
+	constructor(symbol,x,y,color) {
+		this.symbol = symbol
+		this.x = x
+		this.y = y
+		this.color = color
+	}
+}
+
+const Commands = {
+	/// <summary>
+	/// Pauses the text output for the specified amount of time.
+	/// </summary>
+	Sleep: "Sleep",
+	/// <summary>
+	/// Changes text color to the specified color.
+	/// </summary>
+	ColorChange: "ColorChange",
+	/// <summary>
+	/// Shows a button prompt and waits for the button
+	/// </summary>
+	ButtonPrompt: "ButtonPrompt",
+	/// <summary>
+	/// Shows a button prompt and waits a bit before continuing
+	/// </summary>
+	ButtonTimeout: "ButtonTimeout",
+	/// <summary>
+	/// Clears the current line of text.
+	/// </summary>
+	PageSwap: "PageSwap",
+	/// <summary>
+	/// Requests that the textbox be closed.
+	/// </summary>
+	Close: "Close",
+	/// <summary>
+	///	Activates instant text.
+	/// </summary>
+	Instant: "Instant",
+	/// <summary>
+	/// Centers the text in the middle of the textbox.
+	/// <summary>
+	CursorCenter: "CursorCenter"
+}
+
+TextCommand = class {
+	constructor(args) {
+		this.command = args.shift()
+		this.args = args
+	}
+}
+
+Presets = {
+	"System":      { placement: {x: 16, y: 16, w: 192, h: 48}, color: {r: 240, g: 240, b: 240}, bgcolor: {r: 16, g: 16, b: 16}, uv: {x: 0, y: 0, w: 8, h: 8}, inflate: 1 },
+	"Inscription": { placement: {x: 16, y: 16, w: 192, h: 48}, color: {r: 16, g: 16, b: 16}, bgcolor: {r: 240, g: 240, b: 240}, uv: {x: 24, y: 0, w: 8, h: 8}, inflate: 1 },
+	"Thoughts":    { placement: {x: 16, y: 16, w: 192, h: 48}, color: {r: 48, g: 96, b: 192}, bgcolor: {r: 240, g: 240, b: 240}, uv: {x: 0, y: 24, w: 8, h: 8}, inflate: 0 },
+	"Dialogue":    { placement: {x: 16, y: 16, w: 192, h: 48}, color: {r: 16, g: 16, b: 16}, bgcolor: {r: 240, g: 240, b: 240}, uv: {x: 0, y: 48, w: 8, h: 8}, inflate: 0 },
+	"Minibox":     { placement: {x: 16, y: 16, w: 192, h: 48}, color: {r: 16, g: 16, b: 16}, bgcolor: {r: 240, g: 240, b: 240}, uv: {x: 24, y: 24, w: 4, h: 4}, inflate: 0 }
+}
+
+Preset = Presets.Dialogue
+
+Textbox = class {
+	constructor(text, skipRot, wordWrap) {
+		this.rawText = text
+		this.displayText = "\0"
+		this.characters = []
+		this.color = Preset.color
+		this.charCommand = []
+		this.charCommand.push([])
+		this.position = 0
+		this.commandPosition = -1
+		this.page = 0
+		this.pagePos = 0
+		if (!skipRot)
+			this.openingClosing = 16
+		else
+			this.openingClosing = 0
+		this.clock = 0
+		this.perliney = 0
+		this.xPos = 0
+		this.yPos = 0
+		this.pageSwap = 0
+		this.drawnChars = 0
+		this.instant = false
+		this.centerLines = "off"
+		
+		this.sleep = 0
+		this.buttonPause = 0
+		
+		for (var i = 0; i < this.rawText.length; i++)
+		{
+			if (this.rawText[i] == '[' && (this.rawText.length - i - 1 > 2) && this.rawText[i + 1] != '[' && this.rawText.indexOf(']', i) != -1)
+			{
+				var command = this.rawText.substr(i + 1, this.rawText.indexOf(']', i) - i - 1);
+				//console.log(command);
+				var splitCommand = command.split(',');
+				if (Commands[splitCommand[0]] != undefined)
+				{
+					this.charCommand[this.charCommand.length - 1].push(new TextCommand(splitCommand));
+				}
+				i = this.rawText.indexOf(']', i);
+			}
+			else
+			{
+				this.charCommand.push([]);
+				this.displayText += this.rawText[i];
+				if (this.rawText[i] == '[') i++;
+			}
+		}
+		
+		this.displayPages = this.splitPages()
+		
+		if (wordWrap)
+			this.wordwrapFuckery()
+	}
+	
+	splitPages() {
+		var swaps = []
+		for (var i=0;i<this.charCommand.length;i++) {
+			var instances = this.charCommand[i].reduce((a, cmd) => cmd.command == "PageSwap" ? ++a : a, 0)
+			for (var j=0;j<instances;j++) {
+				swaps.push(i)
+			}
+		}
+		var parts = []
+		var last = 0
+		for (var i=0;i<swaps.length;i++) {
+			parts.push(this.displayText.substring(last,swaps[i]+1))
+			last = swaps[i] + 1
+		}
+		parts.push(this.displayText.substring(last))
+		return parts
+	}
+	
+	wordwrapFuckery() {
+		var maxPerLine = Preset.placement.w
+		this.displayText = ""
+		for (var p=0;p<this.displayPages.length;p++) {
+			var lines = this.displayPages[p].split("\n")//this.displayText.split("\n")
+			for (var i=0;i<lines.length;i++) {
+				var words = lines[i].match(/(\S+|\s+)/g)
+				var lineWidth = 0
+				if (words == null) continue
+				for (var j=0;j<words.length;j++) {
+					lineWidth += measureString(words[j]).x
+					//console.log(words[j],measureString(words[j]))
+					if (lineWidth>maxPerLine && !(j%2) && j != 0) {
+						words[j-1] = words[j-1].slice(0,-1)+"\n"
+						lineWidth = measureString(words[j]).x
+					}
+				}
+				lines[i] = words.join("")
+				//console.log(lineWidth)
+				
+			}
+			this.displayPages[p] = lines.join("\n")
+			this.displayText += this.displayPages[p]
+		}
+		//this.displayLines = lines
+		//words)
+	}
+	
+	close() {
+		if (this.openingClosing >= 0) {
+			this.openingClosing--
+			this.buttonPause = 0
+		}
+	}
+	
+	overwrite(text, skipRot, wordWrap, forceNoPageSwap) {
+		this.displayText = "\0"
+		this.color = Preset.color
+		this.charCommand = []
+		this.charCommand.push([])
+		this.position = 0
+		this.commandPosition = -1
+		this.page = 0
+		this.pagePos = 0
+		this.drawnChars = 0
+		this.instant = false
+		this.centerLines = "off"
+		if (this.openingClosing < 0) {
+			this.rawText = text
+			this.clock = 0
+			this.perliney = 0
+			this.xPos = 0
+			this.yPos = 0
+			
+			if (!skipRot)
+				this.openingClosing = 16
+			else
+				this.openingClosing = 0
+			this.characters = []
+		}
+		else if (!forceNoPageSwap) this.rawText = "[PageSwap]" + text
+		
+		this.sleep = 0
+		this.buttonPause = 0
+		
+		for (var i = 0; i < this.rawText.length; i++)
+		{
+			if (this.rawText[i] == '[' && (this.rawText.length - i - 1 > 2) && this.rawText[i + 1] != '[' && this.rawText.indexOf(']', i) != -1)
+			{
+				var command = this.rawText.substr(i + 1, this.rawText.indexOf(']', i) - i - 1);
+				//console.log(command);
+				var splitCommand = command.split(',');
+				if (Commands[splitCommand[0]] != undefined)
+				{
+					this.charCommand[this.charCommand.length - 1].push(new TextCommand(splitCommand));
+				}
+				i = this.rawText.indexOf(']', i);
+			}
+			else
+			{
+				this.charCommand.push([]);
+				this.displayText += this.rawText[i];
+				if (this.rawText[i] == '[') i++;
+			}
+		}
+		
+		this.displayPages = this.splitPages()
+		
+		if (wordWrap)
+			this.wordwrapFuckery()
+	}
+	
+	processText() {
+		if (this.openingClosing <= -16) return
+		//if (this.displayText.length <= this.position && this.commandPosition == -1) return;
+	
+		this.clock++
+	
+		if (this.openingClosing != 0)
+		{
+			this.openingClosing--
+			return
+		}
+	
+		if (this.sleep > 0)
+		{
+			this.sleep--
+			if (this.sleep == 0) this.buttonPause = 0
+			return
+		}
+		
+		if (this.buttonPause)
+		{
+			return
+		}
+		
+		if (this.pageSwap > 1)
+		{
+			for (var i = 0; i < this.characters.length; i++)
+			{
+				//var chr = this.characters[i]
+				//chr.y -= 2
+				this.characters[i].y -= 2 //= chr
+			}
+			this.pageSwap--
+			return
+		}
+	
+		do
+		{
+			if (this.displayText.length <= this.position && this.commandPosition == -1) return
+			
+			if (this.commandPosition == -1)
+			{
+				var rect = getGlyph(this.displayText[this.position])
+				
+				if (this.displayText[this.position] == " ")
+					this.drawnChars += 5
+				if (this.displayText[this.position] == "\0")
+				{
+					// Used for the first character to do some things
+				}
+				else if (this.displayText[this.position] == "\n")
+				{
+					this.drawnChars += 15
+					this.xPos = 0
+					this.yPos += this.perliney ? this.perliney : getGlyph(this.displayText[this.position]).h
+					this.perliney = getGlyph(this.displayText[this.position]).h
+					
+					if (this.centerLines == "line")
+					{
+						var proc = this.displayPages[this.page].substr(this.pagePos + 1)
+						var lines = proc.split('\n')
+
+						this.xPos = Math.floor(Preset.placement.w / 2 - measureString(lines[0]).x / 2 - 2)
+					}
+					else if (this.centerLines == "page")
+					{
+						var proc = this.displayPages[this.page]
+
+						this.xPos = Math.floor(Preset.placement.w / 2 - measureString(proc).x / 2 - 2)
+					}
+					else if (this.centerLines == "fullline")
+					{
+						var proc = this.displayPages[this.page].substr(this.pagePos + 1)
+						var lines = proc.split('\n')
+	
+						this.xPos = Math.floor(Preset.placement.w / 2 - measureString(lines[0]).x / 2 - 2)
+					}
+					else if (this.centerLines == "fullpage")
+					{
+						var proc = this.displayPages[this.page]
+						
+						this.xPos = Math.floor(Preset.placement.w / 2 - measureString(proc).x / 2 - 2)
+					}
+					/*if (CenterLines)
+					{
+						string proc = DisplayText.ToString().Substring(Position + 1);
+						string[] lines = proc.Split('\n');
+	
+						DrawPos.X = (float)Math.Floor(Box.Width / 2 - fonts[CurrentFont].Measure(lines[0]).X / 2 - 2);
+					}*/
+				}
+				else
+				{
+					var chr = new Character(this.displayText[this.position],this.xPos,this.yPos,this.color)
+					this.characters.push(chr)
+					this.xPos += getGlyph(this.displayText[this.position]).w
+					this.perliney = Math.max(getGlyph(this.displayText[this.position]).h, this.perliney)
+					this.drawnChars += 2
+				}
+				this.commandPosition = 0;
+			}
+			
+			for (; this.commandPosition < this.charCommand[this.position].length; this.commandPosition++)
+			{
+				var cmd = this.charCommand[this.position][this.commandPosition];
+				switch (cmd.command)
+				{
+					case Commands.Sleep:
+						if (cmd.args.length == 0) break
+						this.sleep = Number(cmd.args[0])
+						this.commandPosition++;
+						return;
+					case Commands.ColorChange:
+						if (cmd.args.length < 3) break;
+						this.color = {r: Number(cmd.args[0]), g: Number(cmd.args[1]), b: Number(cmd.args[2])}
+						break;
+					case Commands.ButtonPrompt:
+						this.buttonPause = true
+						this.commandPosition++
+						this.drawnChars = 0
+						this.clock = 0
+						return;
+					case Commands.ButtonTimeout:
+						this.buttonPause = true
+						this.commandPosition++
+						this.sleep = Math.min(Math.max(120,this.drawnChars),360)
+						this.drawnChars = 0
+						this.clock = 0
+						return;
+					case Commands.PageSwap:
+						this.pageSwap = (Preset.placement.h + 8) / 2
+						this.xPos = 0
+						this.yPos = 0
+						this.page++
+						this.pagePos = -1
+						this.commandPosition++
+						if (this.centerLines == "line")
+						{
+							var proc = this.displayPages[this.page].substr(this.pagePos + 1)
+							var lines = proc.split('\n')
+	
+							this.xPos = Math.floor(Preset.placement.w / 2 - measureString(lines[0]).x / 2 - 2);
+						}
+						else if (this.centerLines == "page")
+						{
+							var proc = this.displayPages[this.page]
+	
+							this.xPos = Math.floor(Preset.placement.w / 2 - measureString(proc).x / 2 - 2);
+						}
+						else if (this.centerLines == "fullline")
+						{
+							var proc = this.displayPages[this.page].substr(this.pagePos + 1)
+							var lines = proc.split('\n')
+							
+							var measure = measureString(lines[0])
+							var measurey = measureString(this.displayPages[this.page])
+							this.xPos = Math.floor(Preset.placement.w / 2 - measure.x / 2 - 2)
+							this.yPos = Math.floor(Preset.placement.h / 2 - measurey.y / 2 - 2)
+						}
+						else if (this.centerLines == "fullpage")
+						{
+							var proc = this.displayPages[this.page]
+							var measure = measureString(proc)
+							this.xPos = Math.floor(Preset.placement.w / 2 - measure.x / 2 - 2)
+							this.yPos = Math.floor(Preset.placement.h / 2 - measure.y / 2 - 2)
+						}
+						return
+					case Commands.Close:
+						this.openingClosing--
+						return;
+					case Commands.Instant:
+						this.instant = !this.instant;
+						break;	
+					case Commands.CursorCenter:
+						this.centerLines = cmd.args[0] ? cmd.args[0] : (this.centerLines == "off" ? "line" : "off")
+						if (this.centerLines == "line")
+						{
+							var proc = this.displayPages[this.page].substr(this.pagePos + 1)
+							var lines = proc.split('\n')
+	
+							this.xPos = Math.floor(Preset.placement.w / 2 - measureString(lines[0]).x / 2 - 2)
+						}
+						else if (this.centerLines == "page")
+						{
+							var proc = this.displayPages[this.page]
+	
+							this.xPos = Math.floor(Preset.placement.w / 2 - measureString(proc).x / 2 - 2)
+						}
+						else if (this.centerLines == "fullline")
+						{
+							var proc = this.displayPages[this.page].substr(this.pagePos + 1)
+							var lines = proc.split('\n')
+							
+							var measure = measureString(lines[0])
+							var measurey = measureString(this.displayPages[this.page])
+							this.xPos = Math.floor(Preset.placement.w / 2 - measure.x / 2 - 2)
+							this.yPos = Math.floor(Preset.placement.h / 2 - measurey.y / 2 - 2)
+						}
+						else if (this.centerLines == "fullpage")
+						{
+							var proc = this.displayPages[this.page]
+							var measure = measureString(proc)
+							this.xPos = Math.floor(Preset.placement.w / 2 - measure.x / 2 - 2)
+							this.yPos = Math.floor(Preset.placement.h / 2 - measure.y / 2 - 2)
+						}
+						break;
+				}
+			}
+			this.commandPosition = -1
+			
+			this.position++
+			this.pagePos++
+		} while (this.instant);
+	}
+
+
+	drawBox() {
+		var rect = Preset.placement
+		var uv = Preset.uv
+		for (var i = rect.x; i < rect.x + rect.w; i += uv.w)
+		{
+			boxcontext.drawImage(textbox, uv.x + uv.w * 2, uv.y, uv.w, uv.h, i, rect.y - uv.w, uv.w, uv.h)
+			boxcontext.drawImage(textbox, uv.x, uv.y + uv.h * 2, uv.w, uv.h, i, rect.y + rect.h, uv.w, uv.h)
+		}
+		for (var i = rect.y; i < rect.y + rect.h; i += uv.h)
+		{
+			boxcontext.drawImage(textbox, uv.x + uv.w * 2, uv.y + uv.h, uv.w, uv.h, rect.x - uv.w, i, uv.w, uv.h)
+			boxcontext.drawImage(textbox, uv.x + uv.w, uv.y + uv.h * 2, uv.w, uv.h, rect.x + rect.w, i, uv.w, uv.h)
+		}
+		boxcontext.drawImage(textbox, uv.x, uv.y, uv.w, uv.h, rect.x - uv.w, rect.y - uv.h, uv.w, uv.h);
+		boxcontext.drawImage(textbox, uv.x + uv.w, uv.y, uv.w, uv.h, rect.x + rect.w, rect.y - uv.h, uv.w, uv.h);
+		boxcontext.drawImage(textbox, uv.x, uv.y + uv.h, uv.w, uv.h, rect.x - uv.w, rect.y + rect.h, uv.w, uv.h);
+		boxcontext.drawImage(textbox, uv.x + uv.w, uv.y + uv.h, uv.w, uv.h, rect.x + rect.w, rect.y + rect.h, uv.w, uv.h);
+		boxcontext.fillStyle = `rgb(${Preset.bgcolor.r},${Preset.bgcolor.g},${Preset.bgcolor.b})`
+		boxcontext.fillRect(rect.x - Preset.inflate, rect.y - Preset.inflate, rect.w + Preset.inflate * 2, rect.h + Preset.inflate * 2)
+		
+		if (this.openingClosing > 0) return
+		
+		for (var i = 0; i < this.characters.length; i++)
+		{
+			var chr = this.characters[i]
+			//sp.DrawBox(textures["pixel"], new Rectangle((int)chr.Position.X + 2 + Box.Location.X, (int)chr.Position.Y + Box.Location.Y + 2, (int)chr.Size.X, (int)chr.Size.Y), Color.Green);
+
+			var orig = getGlyph(chr.symbol)
+			var drawPos = {x: chr.x, y: chr.y, w: orig.w, h: orig.h}
+			if (drawPos.y + drawPos.h < 0) continue
+			if (drawPos.y < 0)
+			{
+				//DrawPos.Deconstruct(out int x, out int y, out int w, out int h);
+				//Orig.Deconstruct(out int x2, out int y2, out int w2, out int h2);
+				
+				var x = drawPos.x
+				var y = drawPos.y
+				var w = drawPos.w
+				var h = drawPos.h
+				
+				var x2 = orig.x
+				var y2 = orig.y
+				var w2 = orig.w
+				var h2 = orig.h
+				
+				/*orig.y -= drawPos.y
+				drawPos.h += drawPos.y
+				orig.h += drawPos.y
+				drawPos.y = 0*/
+				
+				y2 = y2 - y
+				h = h + y
+				h2 = h2 + y
+				y = 0
+				
+				//if (orig.h == 0) continue
+				
+				//console.log(orig,drawPos)
+				
+				drawPos = {x: x, y: y, w: w, h: h}
+				orig = {x: x2, y: y2, w: w2, h: h2}
+			}
+
+			drawPos.x += Preset.placement.x + 2
+			drawPos.y += Preset.placement.y + 2
+			
+			//put(orig.x, orig.y, orig.w, orig.h, drawPos.x, drawPos.y, chr.color.r / 255, chr.color.g / 255, chr.color.b / 255)
+			drawChar(orig.x, orig.y, orig.w, orig.h, drawPos.x, drawPos.y, drawPos.w, drawPos.h, chr.color.r, chr.color.g, chr.color.b);
+			//boxcontext.drawImage(font, orig.x, orig.y, orig.w, orig.h, drawPos.x, drawPos.y, drawPos.w, drawPos.h);
+			/*if (chr.Bold)
+			{
+				DrawPos.Offset(1, 0);
+				sp.Draw(wantedTexture, DrawPos, Orig, Characters[i].Colour);
+			}*/
+		}
+		
+		var step = this.clock / 30 | 0
+		
+		if (this.buttonPause) {
+			boxcontext.drawImage(textbox, uv.x + uv.w * 2, uv.y + uv.h * 2, uv.w, uv.h, rect.x + rect.w / 2 - uv.w / 2, rect.y + rect.h + step % 2, uv.w, uv.h);
+		}
+		
+	}
+}
+
+// Note: to anonymously use twitch IRC, set your nick to justinfan### where # is a random number
+
+inputbox = document.getElementById("text")
 canvas = document.getElementById("canvas")
-scan = document.createElement("canvas")
-context = canvas.getContext("2d")
+box = document.getElementById("box")
+maincontext = canvas.getContext("2d")
+boxcontext = box.getContext("2d")
 _font = document.getElementById("font")
 font = document.createElement("canvas")
 ctx = font.getContext("2d")
+textbox = document.getElementById("textbox")
+
+manual = document.getElementById("manual")
+manual.checked = false
+
+document.querySelector('[name="close"]').checked = true
+/*close = document.getElementById("close")
+close.checked = false*/
+
+style = document.getElementById("style")
+style.selectedIndex = 0
+
+center = document.getElementById("center")
+center.selectedIndex = 0
+
+democanvas = document.getElementById("democanvas")
+democontext = democanvas.getContext("2d")
+
+maincontext.imageSmoothingEnabled = false
+democontext.imageSmoothingEnabled = false
+
+var tbox //= new Textbox("[Close]", true)
+var demotbox //= new Textbox("[Close]")
+//tbox = new Textbox("Hello, world![Sleep,60]\n[ColorChange,255,128,64]This is colored text![ColorChange,16,16,16][ButtonTimeout][PageSwap]Okay, bye![Sleep,60][Close]")
+
+inputbox.onkeypress = function(e) {
+	if (!e.shiftKey && e.keyCode == 13) { // enter
+		e.preventDefault()
+		writeText()
+		return
+	}
+}
+
+var fontcol = "rgb(16,16,16)"
 
 function fontOK() {
 	font.width = _font.width
 	font.height = _font.height
-	ctx.drawImage(_font,0,0)
+	recolorFont(fontcol)
+	//ctx.drawImage(_font,0,0)
 }
 
 textIndex = 0
 
 function writeText() {
-	textIndex=0;
+	if (inputbox.value == "") return
+	var dialogue = inputbox.value
+	
+	if (!manual.checked) {
+		dialogue = dialogue.replace(/(,\s)/g,"$1[Sleep,30]")
+		//dialogue = dialogue.replace(/([\.!?]+\)?)/g,"$1[Sleep,60]") //(?<!(?:Mr|Ms|Dr|Mx)|Mrs)([\.!?]+\)?\s)
+		dialogue = dialogue.replace(/(?<!(?:Mr|Ms|Dr|Mx)|Mrs)([\.!?]+\)?(?=\s|\[PageSwap\]))/g,"$1[Sleep,60]") //(?<!(?:Mr|Ms|Dr|Mx)|Mrs)([\.!?]+\)?\s)
+		dialogue = dialogue.replace(/(\[Sleep,\d+\]$)/,"")
+		/*dialogue = dialogue.replace(",", ",[Sleep,15]")
+		dialogue = dialogue.replace(".", ".[Sleep,60]")
+		dialogue = dialogue.replace("?", "?[Sleep,60]")
+		dialogue = dialogue.replace("!", "![Sleep,60]")*/
+		
+		switch (document.querySelector('[name="close"]:checked').value) {
+			case "close":
+				dialogue += "[ButtonTimeout][Close]"
+				break
+			case "prompt":
+				dialogue += "[ButtonPrompt]"
+				break
+		}
+		
+		dialogue = `[CursorCenter,${center.selectedOptions[0].value}]` + dialogue
+	}
+	
+	if (tbox == undefined)
+		tbox = new Textbox(dialogue, false, true)
+	else
+		tbox.overwrite(dialogue, false, true)
+	inputbox.value = ""
 }
 
+frame = 0
+
+// Hello, world![Sleep,60] [ColorChange,255,128,64]This is colored text![ButtonTimeout][PageSwap]Okay, bye![Sleep,30][Close]
+
+oldtext = undefined
+oldstyle = "Dialogue"
+
 function loop() {
-	if (text.value.length>=textIndex) textIndex++
-	context.clearRect(0,0,canvas.width,canvas.height)
-	if (text.value[textIndex]=="¤" && text.value[textIndex+1]=="c") textIndex += 5
-	drawString(text.value.substr(0,textIndex),4,4)
+	if (oldstyle != style.selectedOptions[0].value) {
+		Preset = Presets[style.selectedOptions[0].value]
+		oldtext = undefined
+		oldstyle = style.selectedOptions[0].value
+	}
+	
+	//if (text.value.length>=textIndex) textIndex++
+	maincontext.clearRect(0,0,canvas.width,canvas.height)
+	boxcontext.clearRect(0,0,box.width,box.height)
+	
+	if (manual.checked)
+		newtext = "[Instant]"+inputbox.value
+	else
+		newtext = `[Instant][CursorCenter,${center.selectedOptions[0].value}]`+inputbox.value
+	if (oldtext != newtext)
+		demotbox = new Textbox(newtext, true, true)
+	oldtext = newtext
+	
+	democontext.clearRect(0,0,democanvas.width,democanvas.height)
+	demotbox.processText()
+	demotbox.drawBox()
+	democontext.drawImage(box, 0, 0, democanvas.width,democanvas.height)
+	
+	boxcontext.clearRect(0,0,box.width,box.height)
+	if (tbox != undefined) {
+		tbox.processText()
+		tbox.drawBox()
+		height = box.height * Math.cos(Math.abs(tbox.openingClosing) / 16 * Math.PI / 2)
+		maincontext.drawImage(box, 0, ((box.height / 2) - height * ((Preset.placement.y + Preset.placement.h / 2) / box.height) - (box.height / 2 - Preset.placement.y - Preset.placement.h / 2))*3, box.width*3, height*3)
+	}
+	frame++
 	requestAnimationFrame(loop)
+}
+
+/*function drawChar(sx,sy,sw,sh,dx,dy,dw,dh,r,g,b) {
+	if ((r+g+b) == 765 || true) {
+		boxcontext.drawImage(font,sx,sy,sw,sh,dx,dy,dw,dh)
+	} else {
+		var compo = interctx.globalCompositeOperation
+		interctx.clearRect(0,0,inter.width,inter.height)
+		interctx.drawImage(font,sx,sy,sw,sh,0,0,dw,dh)
+		interctx.globalCompositeOperation = "source-in"
+		interctx.fillStyle = `rgb(${r},${g},${b})`
+		interctx.fillRect(0,0,inter.width,inter.height)
+		interctx.globalCompositeOperation = compo
+		boxcontext.drawImage(inter,dx,dy)
+	}
+}*/
+
+function drawChar(sx,sy,sw,sh,dx,dy,dw,dh,r,g,b) {
+	if (fontcol != `rgb(${r},${g},${b})`) {
+		fontcol = `rgb(${r},${g},${b})`
+		recolorFont(fontcol)
+	}	
+	boxcontext.drawImage(font,sx,sy,sw,sh,dx,dy,dw,dh)
+}
+
+function recolorFont(col) {
+	var compo = ctx.globalCompositeOperation
+	ctx.clearRect(0,0,font.width,font.height)
+	ctx.drawImage(_font,0,0)
+	ctx.globalCompositeOperation = "source-in"
+	ctx.fillStyle = col
+	ctx.fillRect(0,0,font.width,font.height)
+	ctx.globalCompositeOperation = compo
+}
+
+function measureString(str) {
+	var xPos = 0
+	var yPos = 0
+	var maxX = 0
+	var minY = 0
+	for (var i=0;i<str.length;i++) {
+		chr = str[i]
+		if (chr == "\0") {
+			continue
+		}
+		else if (chr == "\n") {
+			yPos += minY ? minY : getGlyph(chr).h
+			xPos = 0
+			minY = glyphs[35].h
+			// this.perliney ? this.perliney : getGlyph(this.displayText[this.position]).h
+			continue
+		}
+		gl = getGlyph(chr)
+		xPos += gl.w
+		minY = Math.max(gl.h,minY)
+		maxX = Math.max(xPos,maxX)
+	}
+	return {x: maxX, y: yPos + minY}
 }
 
 function drawString(str,x,y) {
@@ -57,22 +785,30 @@ function drawString(str,x,y) {
 			continue
 		}
 		if (chr == "¤") {
-			if (str[i+1] == "c" && (str.length-i)>=4) {
-				r = (str.charCodeAt(i + 2) - 48) / 9
-				g = (str.charCodeAt(i + 3) - 48) / 9
-				b = (str.charCodeAt(i + 4) - 48) / 9
+			if (str[i+1] == "c" && (str.length-i)>4) {
+				r = (str.charCodeAt(i + 2) - 48) / 9 * 255 | 0
+				g = (str.charCodeAt(i + 3) - 48) / 9 * 255 | 0
+				b = (str.charCodeAt(i + 4) - 48) / 9 * 255 | 0
 				i += 4
 				continue
 			}
 		}
-		gl = glyphs[chr.charCodeAt()]
-		put(gl.x,gl.y,gl.w,gl.h,xPos,yPos,r,g,b)
+		gl = getGlyph(chr)
+		drawChar(gl.x,gl.y,gl.w,gl.h,xPos,yPos,gl.w,gl.h,r,g,b)
+		//interctx.drawImage(font,gl.x,gl.y,gl.w,gl.h,xPos,yPos,gl.w,gl.h)
+		//put(gl.x,gl.y,gl.w,gl.h,xPos,yPos,r,g,b)
 		xPos += gl.w
 		minY = Math.max(gl.h,minY)
 	}
 }
 
-function put(sx,sy,sw,sh,dx,dy,r,g,b) {	
+function getGlyph(chr) {
+	var gl = glyphs[chr.charCodeAt()]
+	if (gl == undefined) gl = glyphs[35]
+	return gl
+}
+
+function put(sx,sy,sw,sh,dx,dy,r,g,b) {
 	var data = ctx.getImageData(sx,sy,sw,sh); //copy one char from the font sheet
 	// tint all the pixels
 	for(var i=0;i<data.data.length;i+=4){
@@ -81,12 +817,12 @@ function put(sx,sy,sw,sh,dx,dy,r,g,b) {
 		data.data[i+2] *= b
 	}
 	// draw to the screen
-	context.putImageData(data,dx,dy);
+	boxcontext.putImageData(data,dx,dy);
 }
 
 
 glyphs = {
-	32: new Glyph(2,2,5,14), 33: new Glyph(12,2,3,14), 34: new Glyph(22,2,6,14), 35: new Glyph(32,2,8,14), 36: new Glyph(42,2,8,14), 37: new Glyph(52,2,8,14), 38: new Glyph(62,2,8,14), 39: new Glyph(72,2,4,14), 40: new Glyph(82,2,5,14), 41: new Glyph(92,2,5,14), 42: new Glyph(102,2,8,14), 43: new Glyph(112,2,8,14), 44: new Glyph(122,2,5,14), 45: new Glyph(132,2,8,14), 46: new Glyph(142,2,5,14), 47: new Glyph(152,2,8,14), 48: new Glyph(162,2,8,14), 49: new Glyph(172,2,8,14), 50: new Glyph(182,2,8,14), 51: new Glyph(192,2,8,14), 52: new Glyph(202,2,8,14), 53: new Glyph(212,2,8,14), 54: new Glyph(222,2,8,14), 55: new Glyph(232,2,8,14), 56: new Glyph(242,2,8,14), 57: new Glyph(252,2,8,14), 58: new Glyph(262,2,5,14), 59: new Glyph(272,2,5,14), 60: new Glyph(282,2,6,14), 61: new Glyph(292,2,7,14), 62: new Glyph(302,2,6,14), 63: new Glyph(312,2,8,14), 64: new Glyph(2,18,8,14), 65: new Glyph(12,18,7,14), 66: new Glyph(22,18,7,14), 67: new Glyph(32,18,7,14), 68: new Glyph(42,18,7,14), 69: new Glyph(52,18,7,14), 70: new Glyph(62,18,7,14), 71: new Glyph(72,18,7,14), 72: new Glyph(82,18,7,14), 73: new Glyph(92,18,4,14), 74: new Glyph(102,18,7,14), 75: new Glyph(112,18,7,14), 76: new Glyph(122,18,7,14), 77: new Glyph(132,18,8,14), 78: new Glyph(142,18,7,14), 79: new Glyph(152,18,7,14), 80: new Glyph(162,18,7,14), 81: new Glyph(172,18,7,14), 82: new Glyph(182,18,7,14), 83: new Glyph(192,18,7,14), 84: new Glyph(202,18,8,14), 85: new Glyph(212,18,7,14), 86: new Glyph(222,18,7,14), 87: new Glyph(232,18,8,14), 88: new Glyph(242,18,7,14), 89: new Glyph(252,18,8,14), 90: new Glyph(262,18,7,14), 91: new Glyph(272,18,4,14), 92: new Glyph(282,18,8,14), 93: new Glyph(292,18,4,14), 94: new Glyph(302,18,6,14), 95: new Glyph(312,18,8,14), 96: new Glyph(2,34,4,14), 97: new Glyph(12,34,7,14), 98: new Glyph(22,34,7,14), 99: new Glyph(32,34,7,14), 100: new Glyph(42,34,7,14), 101: new Glyph(52,34,7,14), 102: new Glyph(62,34,5,14), 103: new Glyph(72,34,7,14), 104: new Glyph(82,34,7,14), 105: new Glyph(92,34,4,14), 106: new Glyph(102,34,5,14), 107: new Glyph(112,34,7,14), 108: new Glyph(122,34,6,14), 109: new Glyph(132,34,8,14), 110: new Glyph(142,34,7,14), 111: new Glyph(152,34,7,14), 112: new Glyph(162,34,7,14), 113: new Glyph(172,34,7,14), 114: new Glyph(182,34,7,14), 115: new Glyph(192,34,7,14), 116: new Glyph(202,34,5,14), 117: new Glyph(212,34,7,14), 118: new Glyph(222,34,7,14), 119: new Glyph(232,34,8,14), 120: new Glyph(242,34,7,14), 121: new Glyph(252,34,7,14), 122: new Glyph(262,34,7,14), 123: new Glyph(272,34,8,14), 124: new Glyph(282,34,4,14), 125: new Glyph(292,34,8,14), 126: new Glyph(302,34,8,14), 160: new Glyph(312,34,5,14), 161: new Glyph(2,50,3,14), 162: new Glyph(12,50,8,14), 163: new Glyph(22,50,7,14), 164: new Glyph(32,50,8,14), 165: new Glyph(42,50,8,14), 166: new Glyph(52,50,3,14), 167: new Glyph(62,50,6,14), 168: new Glyph(72,50,5,14), 169: new Glyph(82,50,8,14), 170: new Glyph(92,50,6,14), 171: new Glyph(102,50,8,14), 172: new Glyph(112,50,7,14), 173: new Glyph(122,50,7,14), 174: new Glyph(132,50,8,14), 175: new Glyph(142,50,7,14), 176: new Glyph(152,50,5,14), 177: new Glyph(162,50,6,14), 178: new Glyph(172,50,5,14), 179: new Glyph(182,50,5,14), 180: new Glyph(192,50,3,14), 181: new Glyph(202,50,8,14), 182: new Glyph(212,50,8,14), 183: new Glyph(222,50,5,14), 184: new Glyph(232,50,5,14), 185: new Glyph(242,50,4,14), 186: new Glyph(252,50,6,14), 187: new Glyph(262,50,8,14), 188: new Glyph(272,50,8,14), 189: new Glyph(282,50,8,14), 190: new Glyph(292,50,8,14), 191: new Glyph(302,50,8,14), 192: new Glyph(312,50,7,14), 193: new Glyph(2,66,7,14), 194: new Glyph(12,66,7,14), 195: new Glyph(22,66,7,14), 196: new Glyph(32,66,7,14), 197: new Glyph(42,66,7,14), 198: new Glyph(52,66,8,14), 199: new Glyph(62,66,7,14), 200: new Glyph(72,66,7,14), 201: new Glyph(82,66,7,14), 202: new Glyph(92,66,7,14), 203: new Glyph(102,66,7,14), 204: new Glyph(112,66,4,14), 205: new Glyph(122,66,4,14), 206: new Glyph(132,66,4,14), 207: new Glyph(142,66,4,14), 208: new Glyph(152,66,8,14), 209: new Glyph(162,66,7,14), 210: new Glyph(172,66,7,14), 211: new Glyph(182,66,7,14), 212: new Glyph(192,66,7,14), 213: new Glyph(202,66,7,14), 214: new Glyph(212,66,7,14), 215: new Glyph(222,66,7,14), 216: new Glyph(232,66,7,14), 217: new Glyph(242,66,7,14), 218: new Glyph(252,66,7,14), 219: new Glyph(262,66,7,14), 220: new Glyph(272,66,7,14), 221: new Glyph(282,66,8,14), 222: new Glyph(292,66,7,14), 223: new Glyph(302,66,7,14), 224: new Glyph(312,66,7,14), 225: new Glyph(2,82,7,14), 226: new Glyph(12,82,7,14), 227: new Glyph(22,82,7,14), 228: new Glyph(32,82,7,14), 229: new Glyph(42,82,7,14), 230: new Glyph(52,82,8,14), 231: new Glyph(62,82,7,14), 232: new Glyph(72,82,7,14), 233: new Glyph(82,82,7,14), 234: new Glyph(92,82,7,14), 235: new Glyph(102,82,7,14), 236: new Glyph(112,82,4,14), 237: new Glyph(122,82,4,14), 238: new Glyph(132,82,4,14), 239: new Glyph(142,82,4,14), 240: new Glyph(152,82,7,14), 241: new Glyph(162,82,7,14), 242: new Glyph(172,82,7,14), 243: new Glyph(182,82,7,14), 244: new Glyph(192,82,7,14), 245: new Glyph(202,82,7,14), 246: new Glyph(212,82,7,14), 247: new Glyph(222,82,8,14), 248: new Glyph(232,82,8,14), 249: new Glyph(242,82,7,14), 250: new Glyph(252,82,7,14), 251: new Glyph(262,82,7,14), 252: new Glyph(272,82,7,14), 253: new Glyph(282,82,7,14), 254: new Glyph(292,82,7,14), 255: new Glyph(302,82,7,14)
+	32: new Glyph(2,2,5,14), 33: new Glyph(12,2,3,14), 34: new Glyph(22,2,6,14), 35: new Glyph(32,2,8,14), 36: new Glyph(42,2,8,14), 37: new Glyph(52,2,8,14), 38: new Glyph(62,2,8,14), 39: new Glyph(72,2,4,14), 40: new Glyph(82,2,5,14), 41: new Glyph(92,2,5,14), 42: new Glyph(102,2,8,14), 43: new Glyph(112,2,8,14), 44: new Glyph(122,2,5,14), 45: new Glyph(132,2,8,14), 46: new Glyph(142,2,4,14), 47: new Glyph(152,2,8,14), 48: new Glyph(162,2,8,14), 49: new Glyph(172,2,8,14), 50: new Glyph(182,2,8,14), 51: new Glyph(192,2,8,14), 52: new Glyph(202,2,8,14), 53: new Glyph(212,2,8,14), 54: new Glyph(222,2,8,14), 55: new Glyph(232,2,8,14), 56: new Glyph(242,2,8,14), 57: new Glyph(252,2,8,14), 58: new Glyph(262,2,5,14), 59: new Glyph(272,2,5,14), 60: new Glyph(282,2,6,14), 61: new Glyph(292,2,7,14), 62: new Glyph(302,2,6,14), 63: new Glyph(312,2,8,14), 64: new Glyph(2,18,8,14), 65: new Glyph(12,18,7,14), 66: new Glyph(22,18,7,14), 67: new Glyph(32,18,7,14), 68: new Glyph(42,18,7,14), 69: new Glyph(52,18,7,14), 70: new Glyph(62,18,7,14), 71: new Glyph(72,18,7,14), 72: new Glyph(82,18,7,14), 73: new Glyph(92,18,4,14), 74: new Glyph(102,18,7,14), 75: new Glyph(112,18,7,14), 76: new Glyph(122,18,7,14), 77: new Glyph(132,18,8,14), 78: new Glyph(142,18,7,14), 79: new Glyph(152,18,7,14), 80: new Glyph(162,18,7,14), 81: new Glyph(172,18,7,14), 82: new Glyph(182,18,7,14), 83: new Glyph(192,18,7,14), 84: new Glyph(202,18,8,14), 85: new Glyph(212,18,7,14), 86: new Glyph(222,18,7,14), 87: new Glyph(232,18,8,14), 88: new Glyph(242,18,7,14), 89: new Glyph(252,18,8,14), 90: new Glyph(262,18,7,14), 91: new Glyph(272,18,4,14), 92: new Glyph(282,18,8,14), 93: new Glyph(292,18,4,14), 94: new Glyph(302,18,6,14), 95: new Glyph(312,18,8,14), 96: new Glyph(2,34,4,14), 97: new Glyph(12,34,7,14), 98: new Glyph(22,34,7,14), 99: new Glyph(32,34,7,14), 100: new Glyph(42,34,7,14), 101: new Glyph(52,34,7,14), 102: new Glyph(62,34,5,14), 103: new Glyph(72,34,7,14), 104: new Glyph(82,34,7,14), 105: new Glyph(92,34,4,14), 106: new Glyph(102,34,5,14), 107: new Glyph(112,34,7,14), 108: new Glyph(122,34,6,14), 109: new Glyph(132,34,8,14), 110: new Glyph(142,34,7,14), 111: new Glyph(152,34,7,14), 112: new Glyph(162,34,7,14), 113: new Glyph(172,34,7,14), 114: new Glyph(182,34,7,14), 115: new Glyph(192,34,7,14), 116: new Glyph(202,34,5,14), 117: new Glyph(212,34,7,14), 118: new Glyph(222,34,7,14), 119: new Glyph(232,34,8,14), 120: new Glyph(242,34,7,14), 121: new Glyph(252,34,7,14), 122: new Glyph(262,34,7,14), 123: new Glyph(272,34,8,14), 124: new Glyph(282,34,4,14), 125: new Glyph(292,34,8,14), 126: new Glyph(302,34,8,14), 160: new Glyph(312,34,5,14), 161: new Glyph(2,50,3,14), 162: new Glyph(12,50,8,14), 163: new Glyph(22,50,7,14), 164: new Glyph(32,50,8,14), 165: new Glyph(42,50,8,14), 166: new Glyph(52,50,3,14), 167: new Glyph(62,50,6,14), 168: new Glyph(72,50,5,14), 169: new Glyph(82,50,8,14), 170: new Glyph(92,50,6,14), 171: new Glyph(102,50,8,14), 172: new Glyph(112,50,7,14), 173: new Glyph(122,50,7,14), 174: new Glyph(132,50,8,14), 175: new Glyph(142,50,7,14), 176: new Glyph(152,50,5,14), 177: new Glyph(162,50,6,14), 178: new Glyph(172,50,5,14), 179: new Glyph(182,50,5,14), 180: new Glyph(192,50,3,14), 181: new Glyph(202,50,8,14), 182: new Glyph(212,50,8,14), 183: new Glyph(222,50,5,14), 184: new Glyph(232,50,5,14), 185: new Glyph(242,50,4,14), 186: new Glyph(252,50,6,14), 187: new Glyph(262,50,8,14), 188: new Glyph(272,50,8,14), 189: new Glyph(282,50,8,14), 190: new Glyph(292,50,8,14), 191: new Glyph(302,50,8,14), 192: new Glyph(312,50,7,14), 193: new Glyph(2,66,7,14), 194: new Glyph(12,66,7,14), 195: new Glyph(22,66,7,14), 196: new Glyph(32,66,7,14), 197: new Glyph(42,66,7,14), 198: new Glyph(52,66,8,14), 199: new Glyph(62,66,7,14), 200: new Glyph(72,66,7,14), 201: new Glyph(82,66,7,14), 202: new Glyph(92,66,7,14), 203: new Glyph(102,66,7,14), 204: new Glyph(112,66,4,14), 205: new Glyph(122,66,4,14), 206: new Glyph(132,66,4,14), 207: new Glyph(142,66,4,14), 208: new Glyph(152,66,8,14), 209: new Glyph(162,66,7,14), 210: new Glyph(172,66,7,14), 211: new Glyph(182,66,7,14), 212: new Glyph(192,66,7,14), 213: new Glyph(202,66,7,14), 214: new Glyph(212,66,7,14), 215: new Glyph(222,66,7,14), 216: new Glyph(232,66,7,14), 217: new Glyph(242,66,7,14), 218: new Glyph(252,66,7,14), 219: new Glyph(262,66,7,14), 220: new Glyph(272,66,7,14), 221: new Glyph(282,66,8,14), 222: new Glyph(292,66,7,14), 223: new Glyph(302,66,7,14), 224: new Glyph(312,66,7,14), 225: new Glyph(2,82,7,14), 226: new Glyph(12,82,7,14), 227: new Glyph(22,82,7,14), 228: new Glyph(32,82,7,14), 229: new Glyph(42,82,7,14), 230: new Glyph(52,82,8,14), 231: new Glyph(62,82,7,14), 232: new Glyph(72,82,7,14), 233: new Glyph(82,82,7,14), 234: new Glyph(92,82,7,14), 235: new Glyph(102,82,7,14), 236: new Glyph(112,82,4,14), 237: new Glyph(122,82,4,14), 238: new Glyph(132,82,4,14), 239: new Glyph(142,82,4,14), 240: new Glyph(152,82,7,14), 241: new Glyph(162,82,7,14), 242: new Glyph(172,82,7,14), 243: new Glyph(182,82,7,14), 244: new Glyph(192,82,7,14), 245: new Glyph(202,82,7,14), 246: new Glyph(212,82,7,14), 247: new Glyph(222,82,8,14), 248: new Glyph(232,82,8,14), 249: new Glyph(242,82,7,14), 250: new Glyph(252,82,7,14), 251: new Glyph(262,82,7,14), 252: new Glyph(272,82,7,14), 253: new Glyph(282,82,7,14), 254: new Glyph(292,82,7,14), 255: new Glyph(302,82,7,14)
 }
 
 requestAnimationFrame(loop)
