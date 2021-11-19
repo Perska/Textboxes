@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body {
+	font-family: sans-serif;
+}
+
+.message {
+	margin: 0.25em;
+}
+</style>
+</head>
+<body>
+<div id="box" style="width: 80em; height: 50em; overflow-x: hidden; white-space: pre-line;"></div>
+<textarea id="textbox"></textarea>
+<script>
+box = document.getElementById("box")
+textbox = document.getElementById("textbox")
+
+authkey = ""
+
+textbox.onkeypress = function(e) {
+	if (!e.shiftKey && e.keyCode == 13) { // enter
+		e.preventDefault()
+		if (textbox.value == "") return
+		//send(textbox.value)
+		textbox.value = ""
+		return
+	}
+}
+
+function newMsg(str) {
+	var elem = document.createElement("div")
+	elem.appendChild(document.createTextNode(str))
+	box.appendChild(elem) //str+"\n"
+	return elem
+}
+
+function sbsMsg(msg,username,roomname,data) {
+	var elem = document.createElement("div")
+	var user = document.createElement("span")
+	var room = document.createElement("span")
+	var text = document.createElement("div")
+	
+	user.textContent = username
+	user.name = "user"
+	room.textContent = roomname
+	room.name = "room"
+	text.textContent = msg.t
+	text.name = "text"
+	
+	elem.things = {user: user, room: user, text: text, data: data}
+	
+	elem.className = "message"
+	
+	elem.appendChild(user)
+	elem.appendChild(document.createTextNode(" in "))
+	elem.appendChild(room)
+	elem.appendChild(document.createTextNode(":"))
+	elem.appendChild(text)
+	
+	box.appendChild(elem) //str+"\n"
+	return elem
+}
+
+/*var message = /^(?::([a-zA-Z0-9_\.@!]+) )?([\w\d]+) (.*)$/
+var username = /^[A-Za-z0-9_]+/*/
+
+listenToRooms = [937,0]
+
+messages = {}
+
+function handleMessage(e) {
+	if (e.data.startsWith("accepted:")) {
+		newMsg("Configuration success!")
+	} else if (e.data.startsWith("error:")) {
+		newMsg("Error! " + e.data)
+	} else {
+		var data = JSON.parse(e.data)
+		sockConfig.actions.lastId = data.lastId
+		for (var i=0;i<data.chains.comment.length;i++) {
+			var comment = data.chains.comment[i]
+			if (!listenToRooms.includes(comment.parentId) && !listenToRooms.includes(0)) continue
+			if (!comment.deleted) {
+				if (comment.createDate == comment.editDate) {
+					var msg = decodeComment(comment.content)
+					var user = data.chains.user.find((user) => user.id == comment.createUserId)
+					var room = data.chains.content.find((room) => room.id == comment.parentId)
+					messages[comment.id] = sbsMsg(msg, user.username, room.name, data)
+					if ((box.scrollTop-box.scrollTopMax)>-300) box.scrollTo(0,box.scrollTopMax)
+				} else if (messages[comment.id] != undefined) {
+					var msg = decodeComment(comment.content)
+					messages[comment.id].things.text.textContent = msg.t
+				}
+			} else if (messages[comment.id] != undefined) {
+				//messages[comment.id].textContent = "REDACTED"
+				box.removeChild(messages[comment.id])
+			}
+		}
+	}
+	//{"listeners":null,"chains":{"comment":[{"createDate":"2021-11-18T20:50:42.37Z","editDate":"2021-11-18T20:50:42.37Z","createUserId":5,"editUserId":5,"parentId":2778,"content":"{\"m\":\"12y\",\"a\":7819}\nt","deleted":false,"id":618226}]},"lastId":618226,"warnings":["There were no valid contentIds in your listeners group; not listening"]}
+	
+}
+
+function decodeComment(content) {
+	var newline = content.indexOf("\n")
+	try {
+		// try to parse the first line as JSON
+		var data = JSON.parse(newline>=0 ? content.substr(0, newline) : content)
+	} finally {
+		if (data && data.constructor == Object) { // new or legacy format
+			if (newline >= 0)
+				data.t = content.substr(newline+1) // new format
+		} else // raw
+			data = {t: String(content)}
+		return data
+	}
+}
+
+
+
+sockConfig = {
+	auth: "yourtempauthkey",   
+	actions : {
+		"lastId" : -1,//theLastIdFromPreviousRequestsOr-1,
+		// "statuses" : {"roomidtoshowupin" : "online" },
+		// "clearNotifications" : [ roomidtoshowupin ],
+		"chains" : [ 
+			"comment.0id", 
+			"activity.0id", 
+			"watch.0id",
+			"modulemessage.0id",
+			"content.1parentId.2contentId.3contentId",
+			"user.1createUserId.2userId.4usersInMessage.4sendUserId.4receiveUserId.5createUserId" 
+		]
+	},
+	fields : {
+		user : ["id","username","avatar","super","createDate"],
+		content : ["id","name","type","values","createUserId","permissions"]
+	},
+	listeners : {
+		/*"lastListeners" : { "roomidtoshowupin" : { "0" : "" }},*/
+		"chains" : [ "user.0listeners" ]
+	}
+}
+
+function getWsa(next) {
+	var xml = new XMLHttpRequest()
+	xml.open("GET", "https://smilebasicsource.com/api/read/wsauth", false)
+	xml.setRequestHeader("Authorization", "Bearer " + authkey)
+	xml.send()
+	return xml.response
+}
+
+var sock
+function startWebsock() {
+	var key = getWsa()
+	if (key == "") {
+		sock.onclose = undefined
+		sock.close()
+		newMsg("Getting auth failed...")
+		return
+	}
+	sockConfig.auth = key
+	sock = new WebSocket("wss://smilebasicsource.com/api/read/wslisten")
+	sock.onopen = function(e) {
+		newMsg("Successfully connected!")
+		sock.send(JSON.stringify(sockConfig))
+	}
+	sock.onerror = function(e) { newMsg("There was an error.") }
+	sock.onclose = function(e) { newMsg(`Disconnected... ${e.code} ${e.reason}`); setTimeout(startWebsock,500) }
+	sock.onmessage = handleMessage
+}
+startWebsock()
+
+</script>
+</body>
+</html>

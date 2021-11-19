@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+<body>
+<pre id="box"></pre>
+<textarea id="textbox"></textarea>
+<script>
+box = document.getElementById("box")
+textbox = document.getElementById("textbox")
+textbox.onkeypress = function(e) {
+	if (/*!e.shiftKey && */e.keyCode == 13) { // enter
+		e.preventDefault()
+		if (textbox.value == "") return
+		sock.send(textbox.value)
+		textbox.value = ""
+		return
+	}
+}
+
+function newMsg(str) {
+	var elem = document.createTextNode(str+"\n")
+	box.appendChild(elem)
+}
+
+var message = /^(?::([a-zA-Z0-9_\.@!]+) )?([\w\d]+) (.*)$/
+var username = /^[A-Za-z0-9_]+/
+
+function handleMessage(e) {
+	var lines = e.data.split(/[\r\n]+/)
+	for (var i=0;i<lines.length;i++) {
+		try {
+			if (lines[i] == "") continue
+			var data = lines[i].match(message)
+			if (data == null) newMsg("Error parsing "+lines[i])
+			var user = data[1] ? data[1].match(username)[0] : "???"
+			var args = parseArgs(data[3])
+			switch (data[2]) {
+				case "PING":
+					sock.send("PONG " + data[3])
+					newMsg("(Ping, pong...)")
+					break
+				case "PRIVMSG":
+					newMsg(`[${user}] ${args[args.length - 1]}`)
+					break
+				default:
+					newMsg(lines[i])
+					break
+			}
+		}
+		catch (e) {
+			newMsg(e + " when parsing " + lines[i])
+			console.error(e, lines[i])
+		}
+	}
+}
+
+function parseArgs(args) {
+	var index = 0
+	var params = []
+	while (true) {
+		if (args[index]==":") {
+			params.push(args.substring(index + 1))
+			break
+		} else {
+			next = args.indexOf(" ", index)
+			if (next==-1)
+				params.push(args.substring(index))
+			else
+				params.push(args.substring(index, next))
+			if (next==-1) break
+			index = args.indexOf(" ", index) + 1
+		}
+	}
+	return params
+}
+
+sock = new WebSocket("wss://irc-ws.chat.twitch.tv:443")
+sock.onopen = function(e) { newMsg("Successfully connected!"); sock.send("NICK justinfan398"); sock.send("JOIN #perska") }
+sock.onerror = function(e) { newMsg("There was an error.") }
+sock.onclose = function(e) { newMsg(`Disconnected... ${e.code} ${e.reason}`) }
+sock.onmessage = handleMessage
+</script>
+</body>
+</html>
